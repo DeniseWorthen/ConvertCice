@@ -29,6 +29,12 @@
                             nx_block = 4500, & ! global grid size
                             ny_block = 3297
 
+      ! new layer number and layer variables
+      integer (kind=int_kind), parameter :: nilyrnew = 7
+      real (kind=dbl_kind), dimension (nx_block,ny_block,nilyrnew,ncat) :: qicen, sicen
+      real (kind=dbl_kind), dimension(nilyr)    :: ain
+      real (kind=dbl_kind), dimension(nilyrnew) :: aout
+
       ! these values are for the standard gx3 configuration
 !      integer (kind=int_kind), parameter :: &
 !                            ncat = 5, &       ! number of thickness cats
@@ -264,10 +270,17 @@
       enddo
 
       ! write cice 5.0 restart data
-      call dumpfile_5_0 (iced_5_0)
+      !call dumpfile_5_0 (iced_5_0)
 
-      ! write cice 5.0 netcdf restart file
-      call write_netcdf(trim(iced_5_0)//'.nc')
+      ! write cice 5.0 netcdf restart file, original layers
+      !call write_netcdf(trim(iced_5_0)//'.nc', .false.)
+
+      ! interpolate from nilyr to nilyrnew
+      call interpolate_newlayers(trcrn,nt_sice,sicen)
+      !call interpolate_newlayers(trcrn,nt_qice,qicen)
+
+      ! write cice 5.0 netcdf restart file, new layers
+      call write_netcdf(trim(iced_5_0)//'.intp.nc', .true.)
 
 !=======================================================================
 
@@ -600,14 +613,15 @@
 
       end subroutine ice_write
 
-      subroutine write_netcdf(fname)
+      subroutine write_netcdf(fname, new_layers)
         use netcdf
 
         character(len=*), intent(in) :: fname
+        logical         , intent(in) :: new_layers
 
         ! local variables
         integer, parameter :: ncatvars = 4, nlyrvars = 2, nsnwvars = 1, n2dvars = 23
-        integer            :: n
+        integer            :: n, nilyr_out
         integer            :: ncid, rc, idimid, jdimid, kdimid, id
         integer            :: dim3(3), dim2(2)
         character(len=20)  :: vname
@@ -628,6 +642,11 @@
                 "strocnxT    ", "strocnyT    ", "iceumask    "/)
 
         coszen = c0
+        if (new_layers) then
+           nilyr_out = nilyrnew
+        else
+           nilyr_out = nilyr
+        end if
         print *,'creating netcdf restart ',trim(fname)
 
         rc = nf90_create(trim(fname), nf90_64bit_offset, ncid)
@@ -643,7 +662,7 @@
         end do
         ! define ice layer variables
         do n = 1,nlyrvars
-           do k = 1,nilyr
+           do k = 1,nilyr_out
               write(nchar,'(i3.3)') k
               vname = trim(lyrvars(n))//trim(nchar)
               rc = nf90_def_var(ncid, vname, nf90_double, dim3, id)
@@ -684,23 +703,32 @@
         print *,'Tsfcn ',minval(tmpvar), maxval(tmpvar)
 
         n = 1   ! sice
-        do k = 1,nilyr
+        do k = 1,nilyr_out
            write(nchar,'(i3.3)') k
            vname = trim(lyrvars(n))//trim(nchar)
-           tmpvar(:,:,:) = trcrn(:,:,nt_sice+k-1,:)
-           print '(a,i5,2g15.7)',trim(vname)//' tracer index ',nt_sice+k-1,minval(tmpvar),maxval(tmpvar)
+           if (new_layers) then
+              tmpvar(:,:,:) = sicen(:,:,k,:)
+           else
+              tmpvar(:,:,:) = trcrn(:,:,nt_sice+k-1,:)
+           end if
+           print '(a,i5,2g15.7)',trim(vname)//' layer ',k,minval(tmpvar),maxval(tmpvar)
            rc = nf90_inq_varid(ncid, trim(vname), id)
            rc = nf90_put_var(ncid, id, tmpvar)
         end do
         n = 2   ! qice
-        do k = 1,nilyr
+        do k = 1,nilyr_out
            write(nchar,'(i3.3)') k
            vname = trim(lyrvars(n))//trim(nchar)
-           tmpvar(:,:,:) = trcrn(:,:,nt_qice+k-1,:)
-           print '(a,i5,2g15.7)',trim(vname)//' tracer index ',nt_qice+k-1,minval(tmpvar),maxval(tmpvar)
+           if (new_layers) then
+              tmpvar(:,:,:) = qicen(:,:,k,:)
+           else
+              tmpvar(:,:,:) = trcrn(:,:,nt_qice+k-1,:)
+           endif
+           print '(a,i5,2g15.7)',trim(vname)//' layer ',k,minval(tmpvar),maxval(tmpvar)
            rc = nf90_inq_varid(ncid, trim(vname), id)
            rc = nf90_put_var(ncid, id, tmpvar)
         end do
+
         n = 1  ! qsno
         do k = 1,nslyr
            write(nchar,'(i3.3)') k
@@ -791,6 +819,61 @@
         rc = nf90_close(ncid)
 
       end subroutine write_netcdf
+
+      subroutine interpolate_newlayers(ain,ntstart,aout)
+
+        real (kind = dbl_kind),  intent(in)  :: ain(nx_block,ny_block,max_ntrcr,ncat)
+        integer (kind=int_kind), intent(in)  :: ntstart
+        real (kind = dbl_kind),  intent(out) :: aout(nx_block,ny_block,nilyrnew,ncat)
+
+        ! local variables
+        integer (kind=int_kind) :: kk
+        real (kind = dbl_kind)  :: delh,delhnew,h,slope
+        real (kind = dbl_kind)  :: xi(nilyr), fi(nilyr)      ! input layer axis and values
+        real (kind = dbl_kind)  :: xo(nilyrnew), fo(nilyr)   ! output layer axis and values
+
+        aout = 0.0d0
+        ! define data axis for old and new layers
+        h = 1.0d0
+        delh = h/float(nilyr)
+        delhnew = h/float(nilyrnew)
+
+        xi(1) = delh/2.0d0
+        do k = 2,nilyr
+           xi(k) = xi(k-1) + delh
+        end do
+        !print *,xi
+        xo(1) = delhnew/2.0d0
+        do k = 2,nilyrnew
+           xo(k) = xo(k-1) + delhnew
+        end do
+        !print *,xo
+
+        ! set new top and bottom values
+        aout(:,:,1,       :) = ain(:,:,ntstart,        :)
+        aout(:,:,nilyrnew,:) = ain(:,:,ntstart+nilyr-1,:)
+        ! interpolate middle
+        do n = 1,ncat
+           do j = 1,ny_block
+              do i = 1,nx_block
+                 do k = 1,nilyr
+                    fi(k) = ain(i,j,ntstart+k-1,n)
+                 end do
+
+                 do k = 2,nilyrnew-1
+                    do kk = 1,nilyr-1
+                       if (xo(k) .gt. xi(kk) .and. xo(k) .lt. xi(kk+1) ) then
+                          slope = (fi(kk+1) - fi(kk))/(xi(kk+1) - xi(kk))
+                          fo(k) = fi(kk) + slope * (xo(k-1) - xi(kk))
+                       end if
+                    end do
+                    aout(i,j,k,n) = fo(k)
+                 end do
+              end do
+           end do
+        end do
+
+      end subroutine interpolate_newlayers
 
 !=======================================================================
 

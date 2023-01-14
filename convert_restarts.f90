@@ -30,10 +30,10 @@
                             ny_block = 3297
 
       ! new layer number and layer variables
-      integer (kind=int_kind), parameter :: nilyrnew = 7
+      integer (kind=int_kind), parameter                                :: nilyrnew = 7
       real (kind=dbl_kind), dimension (nx_block,ny_block,nilyrnew,ncat) :: qicen, sicen
-      real (kind=dbl_kind), dimension(nilyr)    :: ain
-      real (kind=dbl_kind), dimension(nilyrnew) :: aout
+      real (kind=dbl_kind), dimension(nilyr)                            :: ain
+      real (kind=dbl_kind), dimension(nilyrnew)                         :: aout
 
       ! these values are for the standard gx3 configuration
 !      integer (kind=int_kind), parameter :: &
@@ -849,17 +849,18 @@
         end do
         !print *,xo
 
-        ! set new top and bottom values
-        aout(:,:,1,       :) = ain(:,:,ntstart,        :)
-        aout(:,:,nilyrnew,:) = ain(:,:,ntstart+nilyr-1,:)
         ! interpolate middle
         do n = 1,ncat
            do j = 1,ny_block
               do i = 1,nx_block
+                 ! nilyr values
                  do k = 1,nilyr
                     fi(k) = ain(i,j,ntstart+k-1,n)
                  end do
-
+                 ! nilyrnew values; piecewise linear interpolation
+                 ! set new top and bottom values
+                 fo(1)        = fi(1)
+                 fo(nilrynew) = fi(nilyr)
                  do k = 2,nilyrnew-1
                     do kk = 1,nilyr-1
                        if (xo(k) .gt. xi(kk) .and. xo(k) .lt. xi(kk+1) ) then
@@ -867,8 +868,8 @@
                           fo(k) = fi(kk) + slope * (xo(k-1) - xi(kk))
                        end if
                     end do
-                    aout(i,j,k,n) = fo(k)
                  end do
+                 aout(i,j,:,n) = fo(:)
               end do
            end do
         end do

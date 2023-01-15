@@ -277,7 +277,7 @@
 
       ! interpolate from nilyr to nilyrnew
       call interpolate_newlayers(trcrn,nt_sice,sicen)
-      !call interpolate_newlayers(trcrn,nt_qice,qicen)
+      call interpolate_newlayers(trcrn,nt_qice,qicen)
 
       ! write cice 5.0 netcdf restart file, new layers
       call write_netcdf(trim(iced_5_0)//'.intp.nc', .true.)
@@ -829,8 +829,8 @@
         ! local variables
         integer (kind=int_kind) :: kk
         real (kind = dbl_kind)  :: delh,delhnew,h,slope
-        real (kind = dbl_kind)  :: xi(nilyr), fi(nilyr)      ! input layer axis and values
-        real (kind = dbl_kind)  :: xo(nilyrnew), fo(nilyr)   ! output layer axis and values
+        real (kind = dbl_kind)  :: xi(nilyr), fi(nilyr)         ! input layer axis and values
+        real (kind = dbl_kind)  :: xo(nilyrnew), fo(nilyrnew)   ! output layer axis and values
 
         aout = 0.0d0
         ! define data axis for old and new layers
@@ -849,7 +849,11 @@
         end do
         !print *,xo
 
-        ! interpolate middle
+        ! i = 3000; j = 3000 ;
+        ! do k = 1,nilyr
+        !    print '(i4,6e14.5)',k,xi(k),(ain(i,j,ntstart+k-1,n),n=1,5)
+        ! end do
+
         do n = 1,ncat
            do j = 1,ny_block
               do i = 1,nx_block
@@ -860,12 +864,12 @@
                  ! nilyrnew values; piecewise linear interpolation
                  ! set new top and bottom values
                  fo(1)        = fi(1)
-                 fo(nilrynew) = fi(nilyr)
+                 fo(nilyrnew) = fi(nilyr)
                  do k = 2,nilyrnew-1
                     do kk = 1,nilyr-1
                        if (xo(k) .gt. xi(kk) .and. xo(k) .lt. xi(kk+1) ) then
                           slope = (fi(kk+1) - fi(kk))/(xi(kk+1) - xi(kk))
-                          fo(k) = fi(kk) + slope * (xo(k-1) - xi(kk))
+                          fo(k) = fi(kk) + slope * (xo(k) - xi(kk))
                        end if
                     end do
                  end do
@@ -873,6 +877,12 @@
               end do
            end do
         end do
+
+        ! i = 3000; j = 3000 ; n = 5
+        ! do k = 1,nilyrnew
+        !    print '(i4,6e14.5)',k,xo(k),(aout(i,j,k,n),n=1,5)
+        ! end do
+        ! print *
 
       end subroutine interpolate_newlayers
 
